@@ -55,13 +55,6 @@ StudentLocker/
 - **What you can change**:
   - `MainActivity.java`: The primary screen controller. You can handle button clicks, open new screens, and update UI elements here.
   - **Adding new screens**: Right-click `com.ifelse101.studentlocker` -> **New -> Activity -> Empty Views Activity**.
-- **Example - Finding a view and handling a button click**:
-  ```java
-  Button btnAdd = findViewById(R.id.btn_add_folder);
-  btnAdd.setOnClickListener(v -> {
-      // Your code here when user clicks the button
-  });
-  ```
 
 ---
 
