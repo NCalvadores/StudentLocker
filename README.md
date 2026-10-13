@@ -80,7 +80,7 @@ StudentLocker/
 
 ---
 
-## 🛠️ Contributor Guidelines for Students
+## 🛠️ Contributor Guidelines
 
 To make sure everyone can work smoothly without breaking each other's code:
 
