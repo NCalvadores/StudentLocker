@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">Student Locker</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_files">Files</string>
+    <string name="nav_folder">Folder</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_settings">Settings</string>
+    <string name="title_home">Home Fragment</string>
+    <string name="title_files">Files Fragment</string>
+    <string name="title_folder">Folder Fragment</string>
+    <string name="title_search">Search Fragment</string>
+    <string name="title_settings">Settings Fragment</string>
 </resources>
