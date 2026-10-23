@@ -10,7 +10,11 @@
     <string name="title_folder">Folder Fragment</string>
     <string name="title_search">Search Fragment</string>
     <string name="title_settings">Settings Fragment</string>
-    <string name="auth_sign_in">Sign in</string>
-    <string name="auth_sign_out">Sign out</string>
-    <string name="auth_not_signed_in">Not signed in</string>
+    <string name="sign_in">Sign in</string>
+    <string name="sign_out">Sign out</string>
+    <string name="not_signed_in">Not signed in</string>
+    <string name="default_user_name">User</string>
+    <string name="sign_in_failed">Couldn\'t sign in. Please try again.</string>
+    <string name="signed_in_success">Signed in successfully</string>
+    <string name="signed_out_success">Signed out successfully</string>
 </resources>
