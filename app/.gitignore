@@ -44,3 +44,9 @@ google-services.json
 # Android Profiling
 *.hprof
 >>>>>>> 354616bf868de9d1bd0318c738f1b6c113b01eff
+
+.gradle/
+.idea/
+/build
+/app/build
+local.properties

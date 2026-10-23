@@ -1,0 +1,22 @@
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="Preferences">
+        <SwitchPreferenceCompat
+            app:key="dark_mode"
+            app:title="Dark Mode"
+            app:summary="Enable dark theme" />
+
+        <SwitchPreferenceCompat
+            app:key="notifications"
+            app:title="Notifications"
+            app:summary="Receive app notifications" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Account">
+        <Preference
+            app:key="pref_about"
+            app:title="About Student Locker"
+            app:summary="Version 1.0" />
+    </PreferenceCategory>
+
+</PreferenceScreen>
