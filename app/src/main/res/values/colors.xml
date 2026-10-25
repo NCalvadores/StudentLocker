@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        Keep theme colors here instead of hard-coding hex values in layouts and code.
+        Naming rule: prefer semantic names such as color_brand_primary, color_surface,
+        color_on_surface, and color_error. This makes theme updates and new colors easy.
+        To add a new color: define it here, then reference it in XML with @color/name.
+    -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
 </resources>

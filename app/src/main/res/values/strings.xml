@@ -17,4 +17,8 @@
     <string name="sign_in_failed">Couldn\'t sign in. Please try again.</string>
     <string name="signed_in_success">Signed in successfully</string>
     <string name="signed_out_success">Signed out successfully</string>
+    <string name="dark_mode">Dark Mode</string>
+    <string name="notifications">Notifications</string>
+    <string name="about_student_locker">About Student Locker</string>
+    <string name="version">Version 1.0</string>
 </resources>
