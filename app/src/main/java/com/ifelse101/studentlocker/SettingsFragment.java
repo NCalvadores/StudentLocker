@@ -3,12 +3,12 @@ package com.ifelse101.studentlocker;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.CancellationSignal;
-import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.StringRes;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.credentials.exceptions.GetCredentialCancellationException;
 
 import androidx.annotation.NonNull;
@@ -24,6 +24,7 @@ import androidx.credentials.GetCredentialResponse;
 import androidx.credentials.exceptions.ClearCredentialException;
 import androidx.credentials.exceptions.GetCredentialException;
 import androidx.fragment.app.Fragment;
+import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 
@@ -36,14 +37,6 @@ import com.google.firebase.auth.AuthCredential;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GoogleAuthProvider;
-
-/* Since I don't understand sht in this code - Nathan
- * Maglalagay ako ng comments sa mga complicated part - Nathan
- * Yup, puro comments hahahaha - Nathan
- *
- * I've used google api as login and it's already
- * connected to firebase - Nathan
- */
 
 public class SettingsFragment extends Fragment {
 
@@ -93,7 +86,9 @@ public class SettingsFragment extends Fragment {
     /** Disables the button while the Google popup / Firebase login is running. */
     private void setSigningIn(boolean signingIn) {
         isSigningIn = signingIn;
-        btnAuth.setEnabled(!signingIn);
+        if (btnAuth != null) {
+            btnAuth.setEnabled(!signingIn);
+        }
     }
     /** Puts the list from preferences.xml under the profile header (only once). */
     private void loadPreferenceList() {
@@ -126,7 +121,7 @@ public class SettingsFragment extends Fragment {
 
     /** Step 1: ask Google which account to use (popup). */
     private void signIn() {
-        setSigningIn(false);
+        setSigningIn(true);
 
         GetSignInWithGoogleOption option =
                 new GetSignInWithGoogleOption.Builder(getString(R.string.default_web_client_id)).build();
@@ -154,7 +149,7 @@ public class SettingsFragment extends Fragment {
                             Log.w(TAG, "Sign-in cancelled", e);
                             return;
                         }
-                        showError(Integer.parseInt(String.valueOf(R.string.sign_in_failed)), e);
+                        showError(R.string.sign_in_failed, e);
                     }
                 });
     }
@@ -174,7 +169,7 @@ public class SettingsFragment extends Fragment {
             signInToFirebase(google.getIdToken());
         } catch (Exception e) {
             setSigningIn(false);
-            showError(Integer.parseInt(String.valueOf(R.string.sign_in_failed)), e);
+            showError(R.string.sign_in_failed, e);
         }
     }
 
@@ -190,21 +185,23 @@ public class SettingsFragment extends Fragment {
                             ? task.getResult().getUser()
                             : null;
 
+                    setSigningIn(false);
+
                     if (user == null) {
-                        showError(Integer.parseInt(String.valueOf(R.string.sign_in_failed)), task.getException());
+                        showError(R.string.sign_in_failed, task.getException());
                         return;
                     }
 
                     showUser(user.getDisplayName(), user.getEmail(), user.getPhotoUrl());
-                    toast(Integer.parseInt(String.valueOf(R.string.signed_in_success)));
+                    toast(R.string.signed_in_success);
                 });
     }
 
 
     private void signOut() {
         FirebaseAuth.getInstance().signOut();
-        showLoggedOut(); // reset the header right away, don't wait for the callback
-        toast(Integer.parseInt(String.valueOf(R.string.signed_out_success)));
+        showLoggedOut();
+        toast(R.string.signed_out_success);
 
         // Also tell Credential Manager to forget the Google account
         credentialManager.clearCredentialStateAsync(
@@ -233,7 +230,7 @@ public class SettingsFragment extends Fragment {
                 .disallowHardwareConfig() // avoids a rendering crash on some devices
                 .placeholder(R.drawable.ic_person)
                 .error(R.drawable.ic_person)
-                .fallback(R.drawable.ic_person) // used when photoUrl is null
+                .fallback(R.drawable.ic_person)
                 .into(imgAvatar);
     }
 
@@ -270,6 +267,22 @@ public class SettingsFragment extends Fragment {
                     return true;
                 });
             }
+
+            ListPreference themeMode = findPreference("theme_mode");
+            if (themeMode != null) {
+                themeMode.setOnPreferenceChangeListener((preference, newValue) -> {
+                    ThemeManager.applyTheme(String.valueOf(newValue));
+                    return true;
+                });
+
+                // Default to the saved value if the user has previously selected a theme.
+                String savedTheme = themeMode.getValue();
+                if (savedTheme == null || savedTheme.isEmpty()) {
+                    themeMode.setValue(ThemeManager.THEME_MODE_SYSTEM);
+                }
+            }
         }
     }
+
+
 }
