@@ -1,4 +1,4 @@
-package com.ifelse101.studentlocker;
+package com.ifelse101.studentlocker.fragments.settings;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -34,4 +34,3 @@ public final class ThemeManager {
         AppCompatDelegate.setDefaultNightMode(mode);
     }
 }
-

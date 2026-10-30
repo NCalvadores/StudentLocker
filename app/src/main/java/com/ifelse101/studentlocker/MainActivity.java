@@ -12,6 +12,13 @@ import androidx.fragment.app.Fragment;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
+import com.ifelse101.studentlocker.fragments.files.FilesFragment;
+import com.ifelse101.studentlocker.fragments.folder.FolderFragment;
+import com.ifelse101.studentlocker.fragments.home.HomeFragment;
+import com.ifelse101.studentlocker.fragments.search.SearchFragment;
+import com.ifelse101.studentlocker.fragments.settings.SettingsFragment;
+import com.ifelse101.studentlocker.fragments.settings.ThemeManager;
+
 import java.util.Map;
 import java.util.function.Supplier;
 

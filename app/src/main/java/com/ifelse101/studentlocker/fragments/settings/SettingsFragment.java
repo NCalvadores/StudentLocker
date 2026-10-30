@@ -1,4 +1,4 @@
-package com.ifelse101.studentlocker;
+package com.ifelse101.studentlocker.fragments.settings;
 
 import android.net.Uri;
 import android.os.Bundle;
@@ -8,7 +8,6 @@ import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.StringRes;
-import androidx.appcompat.app.AppCompatDelegate;
 import androidx.credentials.exceptions.GetCredentialCancellationException;
 
 import androidx.annotation.NonNull;
@@ -38,10 +37,11 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GoogleAuthProvider;
 
+import com.ifelse101.studentlocker.R;
+
 public class SettingsFragment extends Fragment {
 
     private static final String TAG = "SignIn";
-
     private CredentialManager credentialManager;
     private ShapeableImageView imgAvatar;
     private TextView tvName;
@@ -144,7 +144,6 @@ public class SettingsFragment extends Fragment {
                         if (!isUiAlive()) return;
                         setSigningIn(false);
 
-                        // User closed the popup: not an error, so no toast
                         if (e instanceof GetCredentialCancellationException) {
                             Log.w(TAG, "Sign-in cancelled", e);
                             return;
