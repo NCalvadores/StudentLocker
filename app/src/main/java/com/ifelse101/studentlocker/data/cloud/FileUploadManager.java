@@ -1,7 +1,6 @@
 package com.ifelse101.studentlocker.data.cloud;
 
 import android.content.Context;
-import android.content.Intent;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -10,42 +9,48 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential;
-import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException;
-import com.google.api.client.http.InputStreamContent;
-import com.google.api.client.http.javanet.NetHttpTransport;
-import com.google.api.client.json.gson.GsonFactory;
-import com.google.api.services.drive.Drive;
-import com.google.api.services.drive.DriveScopes;
-import com.google.api.services.drive.model.File;
-import com.google.api.services.drive.model.FileList;
+import com.amazonaws.HttpMethod;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.GeneratePresignedUrlRequest;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.ifelse101.studentlocker.model.FileModel;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.util.Collections;
-import java.util.List;
+import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Handles uploading files directly to the user's personal Google Drive account
- * inside dedicated category subfolders under 'StudentLocker' ($0 developer cost / no billing needed).
+ * Handles uploading files directly to Cloudflare R2 (S3-compatible object storage)
+ * organized into user folders and custom category subfolders under 'users/{uid}/{category}/'.
  */
 public class FileUploadManager {
 
     private static final String TAG = "FileUploadManager";
 
-    private static final String APP_NAME = "StudentLocker";
-    private static final String ROOT_FOLDER_NAME = "StudentLocker";
-    private static final String FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+    // Cloudflare R2 Credentials & Configuration
+    // Replace placeholders with your actual Cloudflare R2 details
+    public static String R2_ACCOUNT_ID = "YOUR_CLOUDFLARE_ACCOUNT_ID";
+    public static String R2_ACCESS_KEY_ID = "YOUR_R2_ACCESS_KEY_ID";
+    public static String R2_SECRET_ACCESS_KEY = "YOUR_R2_SECRET_ACCESS_KEY";
+    public static String R2_BUCKET_NAME = "student-locker";
+
+    /**
+     * Optional public domain for direct file access (e.g., "https://pub-xxx.r2.dev" or "https://storage.yourdomain.com").
+     * If left blank or null, S3 presigned URLs valid for 7 days will be generated automatically.
+     */
+    public static String R2_PUBLIC_DOMAIN = "";
+
     private static final String DEFAULT_MIME_TYPE = "application/octet-stream";
-    private static final String DRIVE_SPACE = "drive";
-    private static final String FIELDS_ID = "id";
-    private static final String FIELDS_UPLOADED_FILE = "id, name, webViewLink, webContentLink";
     private static final String NOT_SIGNED_IN_MESSAGE =
-            "User must be signed in with Google to upload files.";
+            "User must be signed in to upload files.";
 
     private final Context context;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -62,137 +67,105 @@ public class FileUploadManager {
     }
 
     /**
-     * Uploads a file to the default category in Google Drive storage.
+     * Uploads a file to the default category in Cloudflare R2 storage.
      */
     public void uploadFile(@NonNull Uri fileUri, @NonNull String fileName, @NonNull UploadCallback callback) {
         uploadFile(fileUri, fileName, FileModel.DEFAULT_CATEGORY, callback);
     }
 
     /**
-     * Uploads a file to a custom category subfolder on Google Drive.
+     * Uploads a file to a custom category folder on Cloudflare R2.
      */
     public void uploadFile(@NonNull Uri fileUri, @NonNull String fileName,
                            @Nullable String category, @NonNull UploadCallback callback) {
-        String accountEmail = getSignedInEmail();
-        if (accountEmail == null) {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
             callback.onError(new IllegalStateException(NOT_SIGNED_IN_MESSAGE));
             return;
         }
 
+        String userId = currentUser.getUid();
         String targetCategory = normalizeCategory(category);
-        executor.execute(() -> runUpload(accountEmail, fileUri, fileName, targetCategory, callback));
+        executor.execute(() -> {
+            try {
+                String downloadUrl = runR2Upload(fileUri, fileName, targetCategory, userId);
+                mainHandler.post(() -> callback.onSuccess(downloadUrl));
+            } catch (Exception e) {
+                Log.e(TAG, "Error uploading file to Cloudflare R2 bucket", e);
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
     }
 
-    // Upload flow (runs on the background executor)
-    private void runUpload(String accountEmail, Uri fileUri, String fileName,
-                           String category, UploadCallback callback) {
+    private String runR2Upload(Uri fileUri, String fileName, String category, String userId) throws Exception {
+        if ("YOUR_CLOUDFLARE_ACCOUNT_ID".equals(R2_ACCOUNT_ID) || "YOUR_R2_ACCESS_KEY_ID".equals(R2_ACCESS_KEY_ID)) {
+            Log.w(TAG, "Cloudflare R2 credentials are set to placeholder values. Please configure R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME.");
+        }
+
+        AWSCredentials credentials = new BasicAWSCredentials(R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY);
+        AmazonS3Client s3Client = new AmazonS3Client(credentials);
+
+        String endpoint = "https://" + R2_ACCOUNT_ID + ".r2.cloudflarestorage.com";
+        s3Client.setEndpoint(endpoint);
+
+        // Path structure: StudentLocker/<user_id>/<category>/<timestamp>_<fileName>
+        String s3Key = "StudentLocker/" + userId + "/" + category + "/" + System.currentTimeMillis() + "_" + fileName;
+
+        File tempFile = createTempFileFromUri(fileUri, fileName);
         try {
-            Drive drive = buildDriveService(accountEmail);
+            ObjectMetadata metadata = new ObjectMetadata();
+            metadata.setContentType(resolveMimeType(fileUri));
+            metadata.setContentLength(tempFile.length());
 
-            String rootFolderId = getOrCreateFolder(drive, ROOT_FOLDER_NAME, null);
-            String categoryFolderId = getOrCreateFolder(drive, category, rootFolderId);
+            PutObjectRequest putRequest = new PutObjectRequest(R2_BUCKET_NAME, s3Key, tempFile);
+            putRequest.setMetadata(metadata);
 
-            String link = uploadToFolder(drive, fileUri, fileName, categoryFolderId);
-            mainHandler.post(() -> callback.onSuccess(link));
-        } catch (UserRecoverableAuthIOException e) {
-            Log.e(TAG, "Google Drive OAuth permission required", e);
-            Intent consentIntent = e.getIntent();
-            if (consentIntent != null) {
-                consentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                try {
-                    context.startActivity(consentIntent);
-                } catch (Exception startException) {
-                    Log.e(TAG, "Unable to launch Drive permission activity", startException);
+            s3Client.putObject(putRequest);
+
+            return resolveR2DownloadUrl(s3Client, s3Key);
+        } finally {
+            if (tempFile.exists()) {
+                boolean deleted = tempFile.delete();
+                if (!deleted) {
+                    Log.w(TAG, "Failed to delete temp file: " + tempFile.getAbsolutePath());
                 }
             }
-            mainHandler.post(() -> callback.onError(new Exception(
-                    "Google Drive permission required. Please grant Drive access.", e)));
-        } catch (Exception e) {
-            Log.e(TAG, "Error uploading file to Google Drive subfolder", e);
-            mainHandler.post(() -> callback.onError(e));
         }
     }
 
-    private Drive buildDriveService(String accountEmail) {
-        GoogleAccountCredential credential = GoogleAccountCredential.usingOAuth2(
-                context, Collections.singleton(DriveScopes.DRIVE_FILE));
-        credential.setSelectedAccountName(accountEmail);
-
-        return new Drive.Builder(new NetHttpTransport(), new GsonFactory(), credential)
-                .setApplicationName(APP_NAME)
-                .build();
-    }
-
-    private String uploadToFolder(Drive drive, Uri fileUri, String fileName, String folderId) throws Exception {
-        File metadata = new File()
-                .setName(fileName)
-                .setParents(Collections.singletonList(folderId));
-
-        try (InputStream inputStream = openInputStream(fileUri)) {
-            InputStreamContent content = new InputStreamContent(resolveMimeType(fileUri), inputStream);
-
-            File uploaded = drive.files().create(metadata, content)
-                    .setFields(FIELDS_UPLOADED_FILE)
-                    .execute();
-
-            return resolveLink(uploaded);
-        }
-    }
-
-    // Drive folders
-
-    private String getOrCreateFolder(Drive drive, String name, @Nullable String parentId) throws Exception {
-        String existingId = findFolderId(drive, name, parentId);
-        return existingId != null ? existingId : createFolder(drive, name, parentId);
-    }
-
-    @Nullable
-    private String findFolderId(Drive drive, String name, @Nullable String parentId) throws Exception {
-        FileList result = drive.files().list()
-                .setQ(buildFolderQuery(name, parentId))
-                .setSpaces(DRIVE_SPACE)
-                .execute();
-
-        List<File> folders = result.getFiles();
-        if (folders == null || folders.isEmpty()) return null;
-
-        return folders.get(0).getId();
-    }
-
-    private String createFolder(Drive drive, String name, @Nullable String parentId) throws Exception {
-        File metadata = new File()
-                .setName(name)
-                .setMimeType(FOLDER_MIME_TYPE);
-
-        if (parentId != null) {
-            metadata.setParents(Collections.singletonList(parentId));
+    private String resolveR2DownloadUrl(AmazonS3Client s3Client, String s3Key) {
+        if (R2_PUBLIC_DOMAIN != null && !R2_PUBLIC_DOMAIN.trim().isEmpty()) {
+            String base = R2_PUBLIC_DOMAIN.trim();
+            if (base.endsWith("/")) {
+                base = base.substring(0, base.length() - 1);
+            }
+            return base + "/" + s3Key;
         }
 
-        return drive.files().create(metadata)
-                .setFields(FIELDS_ID)
-                .execute()
-                .getId();
+        Date expiration = new Date();
+        long expTimeMillis = expiration.getTime() + (7L * 24 * 60 * 60 * 1000); // Presigned URL valid for 7 days
+        expiration.setTime(expTimeMillis);
+
+        GeneratePresignedUrlRequest generatePresignedUrlRequest =
+                new GeneratePresignedUrlRequest(R2_BUCKET_NAME, s3Key)
+                        .withMethod(HttpMethod.GET)
+                        .withExpiration(expiration);
+
+        return s3Client.generatePresignedUrl(generatePresignedUrlRequest).toString();
     }
 
-    private String buildFolderQuery(String name, @Nullable String parentId) {
-        String query = "mimeType='" + FOLDER_MIME_TYPE + "'"
-                + " and name='" + escapeQueryValue(name) + "'"
-                + " and trashed=false";
-
-        if (parentId != null) {
-            query += " and '" + parentId + "' in parents";
+    private File createTempFileFromUri(Uri uri, String fileName) throws Exception {
+        File tempFile = File.createTempFile("r2_upload_", "_" + fileName, context.getCacheDir());
+        try (InputStream inputStream = openInputStream(uri);
+             FileOutputStream outputStream = new FileOutputStream(tempFile)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            outputStream.flush();
         }
-        return query;
-    }
-
-    private String escapeQueryValue(String value) {
-        return value.replace("\\", "\\\\").replace("'", "\\'");
-    }
-
-    @Nullable
-    private String getSignedInEmail() {
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        return currentUser != null ? currentUser.getEmail() : null;
+        return tempFile;
     }
 
     private String normalizeCategory(@Nullable String category) {
@@ -212,11 +185,5 @@ public class FileUploadManager {
         String mimeType = context.getContentResolver().getType(fileUri);
         boolean isMissing = mimeType == null || mimeType.isEmpty();
         return isMissing ? DEFAULT_MIME_TYPE : mimeType;
-    }
-
-    private String resolveLink(File uploadedFile) {
-        if (uploadedFile.getWebViewLink() != null) return uploadedFile.getWebViewLink();
-        if (uploadedFile.getWebContentLink() != null) return uploadedFile.getWebContentLink();
-        return "https://drive.google.com/file/d/" + uploadedFile.getId() + "/view";
     }
 }

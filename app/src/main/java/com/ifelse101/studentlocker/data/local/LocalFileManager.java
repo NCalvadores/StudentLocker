@@ -3,6 +3,7 @@ package com.ifelse101.studentlocker.data.local;
 import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
+import android.webkit.MimeTypeMap;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -32,10 +33,6 @@ public class LocalFileManager {
         this.context = context.getApplicationContext();
     }
 
-    /**
-     * Gets the internal directory where locker files are stored offline,
-     * creating it if needed.
-     */
     @NonNull
     public File getLockerDir() {
         File lockerDir = new File(context.getFilesDir(), LOCKER_DIR_NAME);
@@ -43,12 +40,9 @@ public class LocalFileManager {
         return lockerDir;
     }
 
-    /**
-     * Creates a local folder directory for offline files.
-     */
     @NonNull
     public File createLocalFolder(@NonNull String folderName) {
-        String sanitizedName = normalizeFolderName(folderName);
+        String sanitizedName = sanitizeName(folderName);
         if (sanitizedName.isEmpty()) {
             return getLockerDir();
         }
@@ -58,9 +52,6 @@ public class LocalFileManager {
         return folderDir;
     }
 
-    /**
-     * Returns all local folder names created offline.
-     */
     @NonNull
     public List<String> getLocalFolderNames() {
         File[] subDirs = getLockerDir().listFiles(File::isDirectory);
@@ -73,25 +64,23 @@ public class LocalFileManager {
         return names;
     }
 
-    /**
-     * Copies a file from a content Uri into local internal app storage for offline access.
-     */
     @Nullable
     public File saveFileLocally(@NonNull Uri sourceUri, @NonNull String fileName) {
         return saveFileLocally(sourceUri, fileName, null);
     }
 
-    /**
-     * Copies a file from a content Uri into a specific local folder in internal app storage.
-     */
     @Nullable
     public File saveFileLocally(@NonNull Uri sourceUri, @NonNull String fileName, @Nullable String folderName) {
-        String targetName = normalizeFileName(fileName);
+        String sanitizedFileName = sanitizeName(fileName);
+        if (sanitizedFileName.isEmpty()) {
+            sanitizedFileName = FALLBACK_FILE_NAME_PREFIX + System.currentTimeMillis();
+        }
+
         File parentDir = (folderName != null && !folderName.trim().isEmpty())
                 ? createLocalFolder(folderName)
                 : getLockerDir();
 
-        File targetFile = new File(parentDir, targetName);
+        File targetFile = getUniqueTargetFile(parentDir, sanitizedFileName);
 
         try (InputStream inputStream = context.getContentResolver().openInputStream(sourceUri)) {
             if (inputStream == null) return null;
@@ -99,7 +88,7 @@ public class LocalFileManager {
             copyToFile(inputStream, targetFile);
             return targetFile;
         } catch (Exception e) {
-            Log.e(TAG, "Error saving file locally: " + targetName, e);
+            Log.e(TAG, "Error saving file locally: " + sanitizedFileName, e);
             if (targetFile.exists()) {
                 targetFile.delete();
             }
@@ -107,14 +96,68 @@ public class LocalFileManager {
         }
     }
 
-    /**
-     * Returns a list of all files saved locally in offline storage.
-     */
     @NonNull
     public List<File> getLocalFiles() {
         List<File> result = new ArrayList<>();
         collectFilesRecursively(getLockerDir(), result);
         return result;
+    }
+
+    /**
+     * Converts all local files on disk into FileModel objects for UI display.
+     */
+    @NonNull
+    public List<FileModel> getLocalFileModels() {
+        List<FileModel> models = new ArrayList<>();
+        File lockerDir = getLockerDir();
+        collectFileModelsRecursively(lockerDir, lockerDir, models);
+        return models;
+    }
+
+    private void collectFileModelsRecursively(File baseDir, File currentDir, List<FileModel> models) {
+        File[] files = currentDir.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            if (file.isFile()) {
+                models.add(toFileModel(baseDir, file));
+            } else if (file.isDirectory()) {
+                collectFileModelsRecursively(baseDir, file, models);
+            }
+        }
+    }
+
+    @NonNull
+    public FileModel toFileModel(File baseDir, File file) {
+        String category = FileModel.DEFAULT_CATEGORY;
+        File parent = file.getParentFile();
+        if (parent != null && !parent.equals(baseDir)) {
+            category = parent.getName();
+        }
+
+        String mimeType = resolveMimeType(file.getName());
+
+        FileModel model = new FileModel();
+        model.setFileId("local_" + Math.abs(file.getAbsolutePath().hashCode()));
+        model.setFileName(file.getName());
+        model.setLocalPath(file.getAbsolutePath());
+        model.setDownloadUrl("");
+        model.setSizeBytes(file.length());
+        model.setMimeType(mimeType);
+        model.setUpdatedAt(file.lastModified());
+        model.setSynced(false);
+        model.setCategory(category);
+        return model;
+    }
+
+    private String resolveMimeType(String fileName) {
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex >= 0 && dotIndex < fileName.length() - 1) {
+            String ext = fileName.substring(dotIndex + 1).toLowerCase();
+            String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+            if (mime != null) return mime;
+        }
+        return "application/octet-stream";
     }
 
     private void collectFilesRecursively(File directory, List<File> resultList) {
@@ -131,43 +174,40 @@ public class LocalFileManager {
     }
 
     /**
-     * Deletes a local offline file by name.
+     * Deletes a local file by exact absolute path.
      */
-    public boolean deleteLocalFile(@NonNull String fileName) {
-        File target = new File(getLockerDir(), fileName);
-        if (target.exists()) return target.delete();
-
-        for (File file : getLocalFiles()) {
-            if (file.getName().equals(fileName)) {
-                return file.delete();
-            }
-        }
-        return false;
+    public boolean deleteLocalFileByPath(@NonNull String localPath) {
+        if (localPath.trim().isEmpty()) return false;
+        File file = new File(localPath);
+        return file.exists() && file.delete();
     }
 
     /**
-     * Deletes a local folder and all files inside it.
+     * Deletes a local offline file by name within a specific folder/category.
      */
+    public boolean deleteLocalFile(@NonNull String fileName, @Nullable String category) {
+        File parentDir = (category != null && !category.trim().isEmpty())
+                ? new File(getLockerDir(), sanitizeName(category))
+                : getLockerDir();
+
+        File target = new File(parentDir, sanitizeName(fileName));
+        if (target.exists()) return target.delete();
+
+        return false;
+    }
+
     public boolean deleteLocalFolder(@NonNull String folderName) {
-        File folder = new File(getLockerDir(), folderName);
+        String sanitizedFolder = sanitizeName(folderName);
+        File folder = new File(getLockerDir(), sanitizedFolder);
         if (!folder.exists()) return false;
         deleteContentsRecursively(folder);
         return folder.delete();
     }
 
-    /**
-     * Checks if a specific file exists locally for offline usage.
-     */
-    public boolean isFileAvailableOffline(@NonNull String fileName) {
-        File target = new File(getLockerDir(), fileName);
-        if (target.exists() && target.length() > 0) return true;
-
-        for (File file : getLocalFiles()) {
-            if (file.getName().equals(fileName) && file.length() > 0) {
-                return true;
-            }
-        }
-        return false;
+    public boolean isFileAvailableOffline(@NonNull String localPath) {
+        if (localPath.trim().isEmpty()) return false;
+        File file = new File(localPath);
+        return file.exists() && file.length() > 0;
     }
 
     private void ensureDirectoryExists(File directory, String description) {
@@ -190,17 +230,36 @@ public class LocalFileManager {
         }
     }
 
-    private String normalizeFolderName(@NonNull String folderName) {
-        String normalized = folderName == null ? "" : folderName.trim();
-        return normalized == null ? "" : normalized;
+    /**
+     * Sanitizes input strings against path traversal vulnerabilities.
+     */
+    private String sanitizeName(@NonNull String input) {
+        if (input == null) return "";
+        String clean = input.trim().replaceAll("[\\\\/:*?\"<>|]", "_");
+        return new File(clean).getName();
     }
 
-    private String normalizeFileName(@NonNull String fileName) {
-        String normalized = fileName == null ? "" : fileName.trim();
-        if (normalized.isEmpty()) {
-            return FALLBACK_FILE_NAME_PREFIX + System.currentTimeMillis();
+    /**
+     * Prevents overwriting files with identical names by appending numbers.
+     */
+    private File getUniqueTargetFile(File parentDir, String fileName) {
+        File file = new File(parentDir, fileName);
+        if (!file.exists()) return file;
+
+        String nameWithoutExt = fileName;
+        String ext = "";
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex > 0) {
+            nameWithoutExt = fileName.substring(0, dotIndex);
+            ext = fileName.substring(dotIndex);
         }
-        return normalized;
+
+        int count = 1;
+        while (file.exists()) {
+            file = new File(parentDir, nameWithoutExt + " (" + count + ")" + ext);
+            count++;
+        }
+        return file;
     }
 
     private void copyToFile(InputStream source, File target) throws IOException {

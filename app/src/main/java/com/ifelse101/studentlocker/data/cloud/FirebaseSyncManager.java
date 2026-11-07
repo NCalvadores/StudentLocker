@@ -239,20 +239,20 @@ public class FirebaseSyncManager {
     private String resolveFileDocumentId(CollectionReference collection, FileModel fileModel) {
         String existingId = fileModel.getFileId();
         boolean hasId = existingId != null && !existingId.isEmpty();
-        return hasId ? existingId : collection.document().getId();
+        return hasId ? existingId : collection.document().getId(); //same logic as bottom one
     }
 
     private String resolveFolderDocumentId(CollectionReference collection, FolderModel folderModel) {
         String existingId = folderModel.getFolderId();
-        boolean hasId = existingId != null && !existingId.isEmpty();
-        return hasId ? existingId : collection.document().getId();
+        boolean hasId = existingId != null && !existingId.isEmpty(); //checks if file was uploaded before (true)
+        return hasId ? existingId : collection.document().getId(); //if true it reuses id, if false it creates a new one
     }
 
     private List<FileModel> toFileModels(QuerySnapshot snapshot) {
         List<FileModel> files = new ArrayList<>();
         for (DocumentSnapshot document : snapshot) {
             FileModel file = document.toObject(FileModel.class);
-            if (file != null && hasValidFileSource(file)) {
+            if (file != null && hasValidFileSource(file)) { //same logic as other one
                 files.add(file);
             }
         }
@@ -262,7 +262,7 @@ public class FirebaseSyncManager {
     private List<FolderModel> toFolderModels(QuerySnapshot snapshot) {
         List<FolderModel> folders = new ArrayList<>();
         for (DocumentSnapshot document : snapshot) {
-            FolderModel folder = document.toObject(FolderModel.class);
+            FolderModel folder = document.toObject(FolderModel.class); //same logic as other one
             if (folder != null) {
                 folders.add(folder);
             }

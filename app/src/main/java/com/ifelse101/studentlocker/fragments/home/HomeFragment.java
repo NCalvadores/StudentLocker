@@ -194,6 +194,7 @@ public class HomeFragment extends Fragment {
                 if (!isAdded()) return;
                 tvSyncStatus.setText(R.string.sync_error);
                 Log.e(TAG, "Failed to listen to cloud files", e);
+                renderDashboardData(Collections.emptyList());
             }
         });
 
@@ -225,10 +226,12 @@ public class HomeFragment extends Fragment {
         }
     }
 
-    private void renderDashboardData(@NonNull List<FileModel> files) {
+    private void renderDashboardData(@NonNull List<FileModel> cloudFiles) {
+        List<FileModel> allFiles = mergeLocalAndCloudFiles(cloudFiles);
+
         // 1. Calculate and update Storage Overview
         long totalBytes = 0;
-        for (FileModel f : files) {
+        for (FileModel f : allFiles) {
             totalBytes += f.getSizeBytes();
         }
 
@@ -244,10 +247,15 @@ public class HomeFragment extends Fragment {
         tvStorageFree.setText(getString(R.string.storage_free_format, freeStr));
 
         // 2. Sync status label
-        tvSyncStatus.setText(getString(R.string.cloud_synced));
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser != null) {
+            tvSyncStatus.setText(getString(R.string.cloud_synced));
+        } else {
+            tvSyncStatus.setText(R.string.not_signed_in);
+        }
 
         // 3. Render Recent Documents (most recent first, top 5)
-        if (files.isEmpty()) {
+        if (allFiles.isEmpty()) {
             tvNoRecentFiles.setVisibility(View.VISIBLE);
             rvRecentFiles.setVisibility(View.GONE);
             recentFileAdapter.setFiles(Collections.emptyList());
@@ -255,7 +263,7 @@ public class HomeFragment extends Fragment {
             tvNoRecentFiles.setVisibility(View.GONE);
             rvRecentFiles.setVisibility(View.VISIBLE);
 
-            List<FileModel> sortedFiles = new ArrayList<>(files);
+            List<FileModel> sortedFiles = new ArrayList<>(allFiles);
             sortedFiles.sort((a, b) -> Long.compare(b.getUpdatedAt(), a.getUpdatedAt()));
 
             List<FileModel> recentFiles = sortedFiles.subList(0, Math.min(sortedFiles.size(), 5));
@@ -263,7 +271,7 @@ public class HomeFragment extends Fragment {
         }
 
         // 4. Render Document Categories (including user-created folders)
-        Map<String, Integer> categoryCounts = getStringIntegerMap(files);
+        Map<String, Integer> categoryCounts = getStringIntegerMap(allFiles);
 
         if (categoryCounts.isEmpty()) {
             tvNoCategories.setVisibility(View.VISIBLE);
@@ -279,6 +287,29 @@ public class HomeFragment extends Fragment {
             }
             categoryAdapter.setCategories(categories);
         }
+    }
+
+    private List<FileModel> mergeLocalAndCloudFiles(@NonNull List<FileModel> cloudFiles) {
+        List<FileModel> localFiles = localFileManager.getLocalFileModels();
+        Map<String, FileModel> map = new LinkedHashMap<>();
+
+        for (FileModel cloudFile : cloudFiles) {
+            map.put(cloudFile.getFileName(), cloudFile);
+        }
+
+        for (FileModel localFile : localFiles) {
+            String key = localFile.getFileName();
+            if (map.containsKey(key)) {
+                FileModel existing = map.get(key);
+                if (existing != null && (existing.getLocalPath() == null || existing.getLocalPath().isEmpty())) {
+                    existing.setLocalPath(localFile.getLocalPath());
+                }
+            } else {
+                map.put(key, localFile);
+            }
+        }
+
+        return new ArrayList<>(map.values());
     }
 
     @NonNull
@@ -379,16 +410,10 @@ public class HomeFragment extends Fragment {
     private void handleFileSelected(@Nullable Uri uri) {
         if (uri == null) return;
 
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (currentUser == null) {
-            Toast.makeText(requireContext(), "Please sign in to upload files.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
         String fileName = getFileNameFromUri(uri);
         long fileSize = getFileSizeFromUri(uri);
 
-        Toast.makeText(requireContext(), "Saving and uploading " + fileName + " to '" + activeCategory + "'...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(requireContext(), "Saving " + fileName + " to '" + activeCategory + "'...", Toast.LENGTH_SHORT).show();
 
         File localFile = localFileManager.saveFileLocally(uri, fileName, activeCategory);
         if (fileSize <= 0 && localFile != null && localFile.exists()) {
@@ -397,6 +422,14 @@ public class HomeFragment extends Fragment {
 
         if (localFile == null || !localFile.exists()) {
             Toast.makeText(requireContext(), "Could not save the file locally. Please try again.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        renderDashboardData(cachedFiles);
+
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            Toast.makeText(requireContext(), "Saved locally in '" + activeCategory + "'. Sign in to upload to cloud.", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -418,7 +451,7 @@ public class HomeFragment extends Fragment {
                 if (!isAdded()) return;
                 persistCloudMetadata(fileName, localFile, "", finalFileSize, uri, false);
                 Toast.makeText(requireContext(),
-                        "Saved locally in '" + activeCategory + "'. Drive access is unavailable right now.",
+                        "Saved locally in '" + activeCategory + "'. Cloud storage upload failed.",
                         Toast.LENGTH_SHORT).show();
             }
         });

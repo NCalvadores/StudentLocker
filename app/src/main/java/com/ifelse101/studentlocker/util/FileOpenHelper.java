@@ -11,6 +11,7 @@ import androidx.annotation.NonNull;
 import androidx.core.content.FileProvider;
 import androidx.fragment.app.Fragment;
 
+import com.ifelse101.studentlocker.data.local.LocalFileManager;
 import com.ifelse101.studentlocker.model.FileModel;
 
 import java.io.File;
@@ -30,15 +31,37 @@ public final class FileOpenHelper {
 
     private static boolean tryOpenLocalFile(@NonNull Context context, @NonNull FileModel file) {
         String localPath = file.getLocalPath();
-        if (localPath == null || localPath.trim().isEmpty()) {
-            return false;
+        if (localPath != null && !localPath.trim().isEmpty()) {
+            File localFile = new File(localPath);
+            if (localFile.exists() && localFile.isFile()) {
+                return launchLocalFile(context, localFile, file);
+            }
         }
 
-        File localFile = new File(localPath);
-        if (!localFile.exists() || !localFile.isFile()) {
-            return false;
+        // Fallback: check if file with matching name exists in local storage directory
+        String fileName = file.getFileName();
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            LocalFileManager localFileManager = new LocalFileManager(context);
+            File lockerDir = localFileManager.getLockerDir();
+
+            String category = file.getCategory();
+            if (category != null && !category.trim().isEmpty()) {
+                File candidate = new File(new File(lockerDir, category), fileName);
+                if (candidate.exists() && candidate.isFile()) {
+                    return launchLocalFile(context, candidate, file);
+                }
+            }
+
+            File candidate = new File(lockerDir, fileName);
+            if (candidate.exists() && candidate.isFile()) {
+                return launchLocalFile(context, candidate, file);
+            }
         }
 
+        return false;
+    }
+
+    private static boolean launchLocalFile(@NonNull Context context, @NonNull File localFile, @NonNull FileModel file) {
         Uri uri = FileProvider.getUriForFile(
                 context,
                 context.getPackageName() + ".fileprovider",

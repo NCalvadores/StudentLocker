@@ -26,6 +26,7 @@ import com.ifelse101.studentlocker.model.FolderModel;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -97,8 +98,9 @@ public class FolderFragment extends Fragment {
     }
 
     private void startRealtimeSync() {
+        renderFolders();
+
         if (FirebaseAuth.getInstance().getCurrentUser() == null) {
-            showEmptyState("Please sign in to view folders.");
             return;
         }
 
@@ -208,7 +210,8 @@ public class FolderFragment extends Fragment {
 
     private Map<String, Integer> countFilesByCategory() {
         Map<String, Integer> fileCounts = new HashMap<>();
-        for (FileModel file : currentFiles) {
+        List<FileModel> allFiles = getAllFilesMerged();
+        for (FileModel file : allFiles) {
             String category = FileModel.DEFAULT_CATEGORY;
             if (file.getCategory() != null && !file.getCategory().trim().isEmpty()) {
                 category = file.getCategory().trim();
@@ -216,6 +219,29 @@ public class FolderFragment extends Fragment {
             fileCounts.put(category, fileCounts.getOrDefault(category, 0) + 1);
         }
         return fileCounts;
+    }
+
+    private List<FileModel> getAllFilesMerged() {
+        List<FileModel> localFiles = localFileManager.getLocalFileModels();
+        Map<String, FileModel> map = new LinkedHashMap<>();
+
+        for (FileModel cloudFile : currentFiles) {
+            map.put(cloudFile.getFileName(), cloudFile);
+        }
+
+        for (FileModel localFile : localFiles) {
+            String key = localFile.getFileName();
+            if (map.containsKey(key)) {
+                FileModel existing = map.get(key);
+                if (existing != null && (existing.getLocalPath() == null || existing.getLocalPath().isEmpty())) {
+                    existing.setLocalPath(localFile.getLocalPath());
+                }
+            } else {
+                map.put(key, localFile);
+            }
+        }
+
+        return new ArrayList<>(map.values());
     }
 
     private FolderModel createFolderModel(@Nullable String id, String name, long createdAt, int documentCount) {
@@ -308,7 +334,7 @@ public class FolderFragment extends Fragment {
         List<String> folderFileNames = new ArrayList<>();
         String targetCategory = FolderModel.normalizeName(folder.getName());
 
-        for (FileModel file : currentFiles) {
+        for (FileModel file : getAllFilesMerged()) {
             String category = file.getCategory() != null ? file.getCategory().trim() : FileModel.DEFAULT_CATEGORY;
             if (targetCategory.equalsIgnoreCase(category)) {
                 String fileName = file.getFileName();

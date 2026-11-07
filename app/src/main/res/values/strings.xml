@@ -39,4 +39,5 @@
     <string name="cloud_icon">Cloud Icon</string>
     <string name="no_recent_files">No documents synced yet. Tap Upload File above to add your first document!</string>
     <string name="no_categories">No categories created yet.</string>
+    <string name="no_files_found">No documents found. Tap + to upload your first document!</string>
 </resources>

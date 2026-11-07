@@ -24,9 +24,13 @@ import com.ifelse101.studentlocker.data.cloud.FileUploadManager;
 import com.ifelse101.studentlocker.data.cloud.FirebaseSyncManager;
 import com.ifelse101.studentlocker.data.local.LocalFileManager;
 import com.ifelse101.studentlocker.model.FileModel;
+import com.ifelse101.studentlocker.util.FileOpenHelper;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class FilesFragment extends Fragment {
 
@@ -91,6 +95,7 @@ public class FilesFragment extends Fragment {
 
     private void setupRecyclerView() {
         fileAdapter = new FileAdapter();
+        fileAdapter.setOnFileClickListener(file -> FileOpenHelper.open(this, file));
         recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
         recyclerView.setAdapter(fileAdapter);
     }
@@ -101,12 +106,13 @@ public class FilesFragment extends Fragment {
     }
 
     // ------------------------------------------------------------------
-    // Realtime sync
+    // Realtime sync & Local Merging
     // ------------------------------------------------------------------
 
     private void startRealtimeSync() {
+        loadAndMergeFiles(null);
+
         if (!isSignedIn()) {
-            showNotSignedInState();
             return;
         }
 
@@ -114,15 +120,44 @@ public class FilesFragment extends Fragment {
             @Override
             public void onSuccess(List<FileModel> files) {
                 if (!isAdded()) return;
-                renderFiles(files);
+                loadAndMergeFiles(files);
             }
 
             @Override
             public void onError(Exception e) {
                 if (!isAdded()) return;
                 Log.e(TAG, "Error listening to cloud files", e);
+                loadAndMergeFiles(null);
             }
         });
+    }
+
+    private void loadAndMergeFiles(@Nullable List<FileModel> cloudFiles) {
+        List<FileModel> localFiles = localFileManager.getLocalFileModels();
+        Map<String, FileModel> mergedMap = new LinkedHashMap<>();
+
+        // Add cloud files
+        if (cloudFiles != null) {
+            for (FileModel cloudFile : cloudFiles) {
+                String key = cloudFile.getFileName();
+                mergedMap.put(key, cloudFile);
+            }
+        }
+
+        // Add/merge local disk files
+        for (FileModel localFile : localFiles) {
+            String key = localFile.getFileName();
+            if (mergedMap.containsKey(key)) {
+                FileModel existing = mergedMap.get(key);
+                if (existing != null && (existing.getLocalPath() == null || existing.getLocalPath().isEmpty())) {
+                    existing.setLocalPath(localFile.getLocalPath());
+                }
+            } else {
+                mergedMap.put(key, localFile);
+            }
+        }
+
+        renderFiles(new ArrayList<>(mergedMap.values()));
     }
 
     private void stopRealtimeSync() {
@@ -139,14 +174,9 @@ public class FilesFragment extends Fragment {
         showFileList(files);
     }
 
-    private void showNotSignedInState() {
-        if (tvEmptyState == null) return;
-        tvEmptyState.setText(R.string.not_signed_in);
-        tvEmptyState.setVisibility(View.VISIBLE);
-    }
-
     private void showEmptyState() {
         if (tvEmptyState == null || recyclerView == null) return;
+        tvEmptyState.setText(R.string.no_files_found);
         tvEmptyState.setVisibility(View.VISIBLE);
         recyclerView.setVisibility(View.GONE);
     }
@@ -165,16 +195,21 @@ public class FilesFragment extends Fragment {
     private void handleFileSelected(@Nullable Uri uri) {
         if (uri == null) return;
 
-        if (!isSignedIn()) {
-            showToast("Please sign in to upload files.");
-            return;
+        SelectedFile selectedFile = readSelectedFile(uri);
+        showToast("Saving " + selectedFile.name + " locally...");
+
+        File localCopy = localFileManager.saveFileLocally(selectedFile.uri, selectedFile.name, selectedFile.category);
+
+        if (localCopy != null && localCopy.exists()) {
+            showToast("Saved " + selectedFile.name + " locally in '" + selectedFile.category + "'");
+            loadAndMergeFiles(null);
         }
 
-        SelectedFile selectedFile = readSelectedFile(uri);
-        showToast("Saving and uploading " + selectedFile.name + " to '" + selectedFile.category + "'...");
-
-        File localCopy = localFileManager.saveFileLocally(selectedFile.uri, selectedFile.name);
-        uploadToCloud(selectedFile, localCopy);
+        if (isSignedIn()) {
+            uploadToCloud(selectedFile, localCopy);
+        } else {
+            showToast("Signed out. File stored offline.");
+        }
     }
 
     private SelectedFile readSelectedFile(Uri uri) {
@@ -192,7 +227,7 @@ public class FilesFragment extends Fragment {
                 new FileUploadManager.UploadCallback() {
                     @Override
                     public void onProgress(double percent) {
-                        // Progress is not shown in the UI yet.
+                        // Progress callback
                     }
 
                     @Override
@@ -204,13 +239,7 @@ public class FilesFragment extends Fragment {
                     @Override
                     public void onError(Exception e) {
                         if (!isAdded()) return;
-
-                        if (localCopy == null || !localCopy.exists()) {
-                            showToast("Upload failed: " + e.getMessage() + " Please grant Google Drive access.");
-                            return;
-                        }
-
-                        showToast("Upload failed: " + e.getMessage());
+                        showToast("Saved locally. Cloud upload failed: " + e.getMessage());
                     }
                 }
         );
@@ -239,7 +268,7 @@ public class FilesFragment extends Fragment {
             @Override
             public void onError(Exception e) {
                 if (!isAdded()) return;
-                showToast("Uploaded file, but failed to sync metadata.");
+                showToast("File stored locally. Metadata sync will retry.");
             }
         });
     }

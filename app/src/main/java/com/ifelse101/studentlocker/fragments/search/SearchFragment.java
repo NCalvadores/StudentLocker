@@ -17,12 +17,16 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.firestore.ListenerRegistration;
 
 import com.ifelse101.studentlocker.R;
+import com.ifelse101.studentlocker.data.local.LocalFileManager;
 import com.ifelse101.studentlocker.fragments.files.FileAdapter;
 import com.ifelse101.studentlocker.model.FileModel;
 import com.ifelse101.studentlocker.data.cloud.FirebaseSyncManager;
+import com.ifelse101.studentlocker.util.FileOpenHelper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class SearchFragment extends Fragment {
 
@@ -31,6 +35,7 @@ public class SearchFragment extends Fragment {
     private TextView tvEmptySearchResults;
 
     private FileAdapter fileAdapter;
+    private LocalFileManager localFileManager;
     private FirebaseSyncManager firebaseSyncManager;
     private ListenerRegistration syncListener;
 
@@ -48,8 +53,10 @@ public class SearchFragment extends Fragment {
         rvSearchResults = view.findViewById(R.id.rvSearchResults);
         tvEmptySearchResults = view.findViewById(R.id.tvEmptySearchResults);
 
+        localFileManager = new LocalFileManager(requireContext());
         firebaseSyncManager = new FirebaseSyncManager();
         fileAdapter = new FileAdapter();
+        fileAdapter.setOnFileClickListener(file -> FileOpenHelper.open(this, file));
 
         rvSearchResults.setLayoutManager(new LinearLayoutManager(requireContext()));
         rvSearchResults.setAdapter(fileAdapter);
@@ -71,8 +78,9 @@ public class SearchFragment extends Fragment {
     }
 
     private void startRealtimeSync() {
+        loadAndMergeFiles(null);
+
         if (FirebaseAuth.getInstance().getCurrentUser() == null) {
-            showEmptyState("Please sign in to search documents.");
             return;
         }
 
@@ -80,19 +88,44 @@ public class SearchFragment extends Fragment {
             @Override
             public void onSuccess(List<FileModel> files) {
                 if (!isAdded()) return;
-                allFiles.clear();
-                allFiles.addAll(files);
-
-                String currentQuery = etSearchQuery.getText() != null ? etSearchQuery.getText().toString() : "";
-                filterFiles(currentQuery);
+                loadAndMergeFiles(files);
             }
 
             @Override
             public void onError(Exception e) {
                 if (!isAdded()) return;
-                showEmptyState("Error loading files for search.");
+                loadAndMergeFiles(null);
             }
         });
+    }
+
+    private void loadAndMergeFiles(@Nullable List<FileModel> cloudFiles) {
+        List<FileModel> localFiles = localFileManager.getLocalFileModels();
+        Map<String, FileModel> map = new LinkedHashMap<>();
+
+        if (cloudFiles != null) {
+            for (FileModel cloudFile : cloudFiles) {
+                map.put(cloudFile.getFileName(), cloudFile);
+            }
+        }
+
+        for (FileModel localFile : localFiles) {
+            String key = localFile.getFileName();
+            if (map.containsKey(key)) {
+                FileModel existing = map.get(key);
+                if (existing != null && (existing.getLocalPath() == null || existing.getLocalPath().isEmpty())) {
+                    existing.setLocalPath(localFile.getLocalPath());
+                }
+            } else {
+                map.put(key, localFile);
+            }
+        }
+
+        allFiles.clear();
+        allFiles.addAll(map.values());
+
+        String currentQuery = etSearchQuery.getText() != null ? etSearchQuery.getText().toString() : "";
+        filterFiles(currentQuery);
     }
 
     private void filterFiles(String query) {
@@ -100,7 +133,7 @@ public class SearchFragment extends Fragment {
         if (trimmed.isEmpty()) {
             fileAdapter.setFiles(allFiles);
             if (allFiles.isEmpty()) {
-                showEmptyState("No files synced yet.");
+                showEmptyState("No files found.");
             } else {
                 tvEmptySearchResults.setVisibility(View.GONE);
                 rvSearchResults.setVisibility(View.VISIBLE);
