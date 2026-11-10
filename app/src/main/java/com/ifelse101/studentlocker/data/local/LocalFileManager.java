@@ -183,6 +183,38 @@ public class LocalFileManager {
     }
 
     /**
+     * Renames a local file on disk and returns the renamed File if successful.
+     */
+    @Nullable
+    public File renameLocalFile(@NonNull String currentPath, @NonNull String newFileName, @Nullable String category) {
+        String sanitizedNewName = sanitizeName(newFileName);
+        if (sanitizedNewName.isEmpty()) return null;
+
+        File oldFile = new File(currentPath);
+        File parentDir;
+        if (oldFile.exists() && oldFile.getParentFile() != null) {
+            parentDir = oldFile.getParentFile();
+        } else {
+            parentDir = (category != null && !category.trim().isEmpty())
+                    ? new File(getLockerDir(), sanitizeName(category))
+                    : getLockerDir();
+        }
+
+        if (!sanitizedNewName.contains(".") && oldFile.getName().contains(".")) {
+            String oldName = oldFile.getName();
+            String ext = oldName.substring(oldName.lastIndexOf('.'));
+            sanitizedNewName += ext;
+        }
+
+        File targetFile = new File(parentDir, sanitizedNewName);
+        if (oldFile.exists()) {
+            boolean renamed = oldFile.renameTo(targetFile);
+            if (renamed) return targetFile;
+        }
+        return null;
+    }
+
+    /**
      * Deletes a local offline file by name within a specific folder/category.
      */
     public boolean deleteLocalFile(@NonNull String fileName, @Nullable String category) {
@@ -202,6 +234,24 @@ public class LocalFileManager {
         if (!folder.exists()) return false;
         deleteContentsRecursively(folder);
         return folder.delete();
+    }
+
+    /**
+     * Renames a local directory under the locker folder.
+     */
+    public boolean renameLocalFolder(@NonNull String oldFolderName, @NonNull String newFolderName) {
+        String sanitizedOld = sanitizeName(oldFolderName);
+        String sanitizedNew = sanitizeName(newFolderName);
+        if (sanitizedOld.isEmpty() || sanitizedNew.isEmpty() || sanitizedOld.equalsIgnoreCase(sanitizedNew)) {
+            return false;
+        }
+
+        File oldFolder = new File(getLockerDir(), sanitizedOld);
+        File newFolder = new File(getLockerDir(), sanitizedNew);
+        if (oldFolder.exists()) {
+            return oldFolder.renameTo(newFolder);
+        }
+        return false;
     }
 
     public boolean isFileAvailableOffline(@NonNull String localPath) {
