@@ -1,8 +1,12 @@
 package com.ifelse101.studentlocker.fragments.home;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.text.format.Formatter;
 import android.util.Log;
@@ -47,7 +51,14 @@ import java.util.Map;
 public class HomeFragment extends Fragment {
 
     private static final String TAG = "HomeFragment";
-    private static final long TOTAL_STORAGE_BYTES = 15L * 1024 * 1024 * 1024; // 15 GB Quota
+    private static final long TOTAL_STORAGE_BYTES = 2L * 1024 * 1024 * 1024; //2 GB Quota b kb mb gb
+    private static final String PREF_SYNC_TIME = "last_sync_timestamp";
+
+    private final Handler syncTimerHandler = new Handler(Looper.getMainLooper());
+    private Runnable syncTimerRunnable;
+    private long lastSyncTimestamp = 0;
+    private boolean isSyncing = false;
+    private boolean syncFailed = false;
 
     private ShapeableImageView imgHomeAvatar;
     private TextView tvName;
@@ -124,6 +135,9 @@ public class HomeFragment extends Fragment {
         fileUploadManager = new FileUploadManager(requireContext());
         firebaseSyncManager = new FirebaseSyncManager();
 
+        SharedPreferences prefs = requireContext().getSharedPreferences("sync_prefs", Context.MODE_PRIVATE);
+        lastSyncTimestamp = prefs.getLong(PREF_SYNC_TIME, 0);
+
         recentFileAdapter = new RecentFileAdapter();
         rvRecentFiles.setLayoutManager(new LinearLayoutManager(requireContext()));
         rvRecentFiles.setAdapter(recentFileAdapter);
@@ -176,7 +190,7 @@ public class HomeFragment extends Fragment {
     private void startRealtimeSync() {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) {
-            tvSyncStatus.setText(R.string.not_signed_in);
+            updateSyncStatusDisplay();
             renderDashboardData(Collections.emptyList());
             return;
         }
@@ -186,13 +200,18 @@ public class HomeFragment extends Fragment {
             public void onSuccess(List<FileModel> files) {
                 if (!isAdded()) return;
                 cachedFiles = files;
+                updateLastSyncTime(System.currentTimeMillis());
+                isSyncing = false;
                 renderDashboardData(files);
+                updateSyncStatusDisplay();
             }
 
             @Override
             public void onError(Exception e) {
                 if (!isAdded()) return;
-                tvSyncStatus.setText(R.string.sync_error);
+                isSyncing = false;
+                syncFailed = true;
+                updateSyncStatusDisplay();
                 Log.e(TAG, "Failed to listen to cloud files", e);
                 renderDashboardData(Collections.emptyList());
             }
@@ -247,12 +266,7 @@ public class HomeFragment extends Fragment {
         tvStorageFree.setText(getString(R.string.storage_free_format, freeStr));
 
         // 2. Sync status label
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (currentUser != null) {
-            tvSyncStatus.setText(getString(R.string.cloud_synced));
-        } else {
-            tvSyncStatus.setText(R.string.not_signed_in);
-        }
+        updateSyncStatusDisplay();
 
         // 3. Render Recent Documents (most recent first, top 5)
         if (allFiles.isEmpty()) {
@@ -387,21 +401,27 @@ public class HomeFragment extends Fragment {
             return;
         }
 
-        tvSyncStatus.setText("Syncing...");
+        isSyncing = true;
+        updateSyncStatusDisplay();
         Toast.makeText(requireContext(), "Syncing cloud storage...", Toast.LENGTH_SHORT).show();
         firebaseSyncManager.fetchCloudFiles(new FirebaseSyncManager.SyncListCallback() {
             @Override
             public void onSuccess(List<FileModel> files) {
                 if (!isAdded()) return;
+                isSyncing = false;
+                updateLastSyncTime(System.currentTimeMillis());
                 cachedFiles = files;
                 renderDashboardData(files);
+                updateSyncStatusDisplay();
                 Toast.makeText(requireContext(), "Synced " + files.size() + " documents from Cloud.", Toast.LENGTH_SHORT).show();
             }
 
             @Override
             public void onError(Exception e) {
                 if (!isAdded()) return;
-                tvSyncStatus.setText("Sync failed");
+                isSyncing = false;
+                syncFailed = true;
+                updateSyncStatusDisplay();
                 Toast.makeText(requireContext(), "Sync failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
@@ -480,6 +500,8 @@ public class HomeFragment extends Fragment {
             @Override
             public void onSuccess() {
                 if (!isAdded()) return;
+                updateLastSyncTime(System.currentTimeMillis());
+                updateSyncStatusDisplay();
                 String message = uploadSucceeded
                         ? "Document uploaded to '" + activeCategory + "' & synced successfully!"
                         : "File saved locally in '" + activeCategory + "'.";
@@ -536,9 +558,99 @@ public class HomeFragment extends Fragment {
         return 0;
     }
 
+    private void updateLastSyncTime(long timestamp) {
+        lastSyncTimestamp = timestamp;
+        syncFailed = false;
+        if (getContext() != null) {
+            requireContext().getSharedPreferences("sync_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putLong(PREF_SYNC_TIME, timestamp)
+                    .apply();
+        }
+    }
+
+    private void updateSyncStatusDisplay() {
+        if (tvSyncStatus == null || !isAdded()) return;
+
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            tvSyncStatus.setText(R.string.not_signed_in);
+            stopSyncTimer();
+            return;
+        }
+
+        if (isSyncing) {
+            tvSyncStatus.setText("Syncing...");
+            return;
+        }
+
+        if (syncFailed && lastSyncTimestamp == 0) {
+            tvSyncStatus.setText(R.string.sync_error);
+            return;
+        }
+
+        if (lastSyncTimestamp > 0) {
+            long elapsedMs = System.currentTimeMillis() - lastSyncTimestamp;
+            long seconds = Math.max(0, elapsedMs / 1000);
+            String timeAgo;
+            if (seconds < 5) {
+                timeAgo = "Updated just now";
+            } else if (seconds < 60) {
+                timeAgo = "Updated " + seconds + "s ago";
+            } else if (seconds < 3600) {
+                long minutes = seconds / 60;
+                timeAgo = "Updated " + minutes + "m ago";
+            } else if (seconds < 86400) {
+                long hours = seconds / 3600;
+                timeAgo = "Updated " + hours + "h ago";
+            } else {
+                long days = seconds / 86400;
+                timeAgo = "Updated " + days + "d ago";
+            }
+
+            tvSyncStatus.setText("Cloud Synced • " + timeAgo);
+        } else {
+            tvSyncStatus.setText(getString(R.string.cloud_synced));
+        }
+    }
+
+    private void startSyncTimer() {
+        stopSyncTimer();
+        syncTimerRunnable = new Runnable() {
+            @Override
+            public void run() {
+                updateSyncStatusDisplay();
+                if (isAdded() && FirebaseAuth.getInstance().getCurrentUser() != null) {
+                    syncTimerHandler.postDelayed(this, 1000);
+                }
+            }
+        };
+        syncTimerHandler.post(syncTimerRunnable);
+    }
+
+    private void stopSyncTimer() {
+        if (syncTimerRunnable != null) {
+            syncTimerHandler.removeCallbacks(syncTimerRunnable);
+            syncTimerRunnable = null;
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        startSyncTimer();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        stopSyncTimer();
+    }
+
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        stopSyncTimer();
         stopRealtimeSync();
 
         imgHomeAvatar = null;
