@@ -23,6 +23,7 @@ import com.ifelse101.studentlocker.data.cloud.FirebaseSyncManager;
 import com.ifelse101.studentlocker.data.local.LocalFileManager;
 import com.ifelse101.studentlocker.model.FileModel;
 import com.ifelse101.studentlocker.model.FolderModel;
+import com.ifelse101.studentlocker.util.FileOpenHelper;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -90,6 +91,7 @@ public class FolderFragment extends Fragment {
         recyclerViewFolders.setAdapter(folderAdapter);
 
         folderAdapter.setOnFolderClickListener(this::showFolderFilesDialog);
+        folderAdapter.setOnFolderRenameListener(this::showRenameFolderDialog);
         folderAdapter.setOnFolderDeleteListener(this::confirmDeleteFolder);
     }
 
@@ -330,26 +332,93 @@ public class FolderFragment extends Fragment {
                 .show();
     }
 
+    private void showRenameFolderDialog(FolderModel folder) {
+        String oldName = FolderModel.normalizeName(folder.getName());
+        if (FileModel.DEFAULT_CATEGORY.equalsIgnoreCase(oldName)) {
+            Toast.makeText(requireContext(), "Cannot rename default General folder.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        EditText input = new EditText(requireContext());
+        input.setText(oldName);
+        input.setSelection(oldName.length());
+        input.setPadding(32, 16, 32, 16);
+
+        new MaterialAlertDialogBuilder(requireContext())
+                .setTitle("Rename Folder")
+                .setMessage("Enter new folder name:")
+                .setView(input)
+                .setPositiveButton("Rename", (dialog, which) -> {
+                    String newName = FolderModel.normalizeName(input.getText().toString());
+                    if (newName.isEmpty()) {
+                        Toast.makeText(requireContext(), "Folder name cannot be empty.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (newName.equalsIgnoreCase(oldName)) {
+                        return;
+                    }
+
+                    renameFolder(folder, oldName, newName);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void renameFolder(FolderModel folder, String oldName, String newName) {
+        localFileManager.renameLocalFolder(oldName, newName);
+
+        if (folder.getFolderId() != null) {
+            folder.setName(newName);
+            firebaseSyncManager.syncFolderToCloud(folder, new FirebaseSyncManager.SyncCallback() {
+                @Override
+                public void onSuccess() {
+                    if (!isAdded()) return;
+                    Toast.makeText(requireContext(), "Folder renamed to '" + newName + "'.", Toast.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onError(Exception e) {
+                    if (!isAdded()) return;
+                    Toast.makeText(requireContext(), "Folder renamed locally.", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            Toast.makeText(requireContext(), "Folder renamed to '" + newName + "'.", Toast.LENGTH_SHORT).show();
+        }
+
+        renderFolders();
+    }
+
     private void showFolderFilesDialog(FolderModel folder) {
+        List<FileModel> matchingFiles = new ArrayList<>();
         List<String> folderFileNames = new ArrayList<>();
         String targetCategory = FolderModel.normalizeName(folder.getName());
 
         for (FileModel file : getAllFilesMerged()) {
             String category = file.getCategory() != null ? file.getCategory().trim() : FileModel.DEFAULT_CATEGORY;
             if (targetCategory.equalsIgnoreCase(category)) {
+                matchingFiles.add(file);
                 String fileName = file.getFileName();
                 folderFileNames.add(fileName != null ? fileName : "Unnamed File");
             }
         }
 
-        String[] fileArray = folderFileNames.isEmpty()
-                ? new String[]{"No documents inside this folder yet."}
-                : folderFileNames.toArray(new String[0]);
-
-        new MaterialAlertDialogBuilder(requireContext())
-                .setTitle("Folder: " + targetCategory)
-                .setItems(fileArray, null)
-                .setPositiveButton("OK", null)
-                .show();
+        if (matchingFiles.isEmpty()) {
+            new MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("Folder: " + targetCategory)
+                    .setMessage("No documents inside this folder yet.")
+                    .setPositiveButton("OK", null)
+                    .show();
+        } else {
+            String[] fileArray = folderFileNames.toArray(new String[0]);
+            new MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("Folder: " + targetCategory)
+                    .setItems(fileArray, (dialog, which) -> {
+                        FileModel selectedFile = matchingFiles.get(which);
+                        FileOpenHelper.open(this, selectedFile);
+                    })
+                    .setPositiveButton("Cancel", null)
+                    .show();
+        }
     }
 }
